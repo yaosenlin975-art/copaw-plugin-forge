@@ -1,20 +1,34 @@
 ---
-name: copaw-plugin-forge
+name: plugin-forge
 description: "QwenPaw 插件锻造厂 - 从零创建、验证、部署 QwenPaw 插件的完整工具链"
-metadata: {
-  "copaw": {
-    "emoji": "🔨",
-    "requires": {}
-  },
-  "skill_version": "1.0.0"
-}
+metadata:
+  copaw:
+    emoji: "🔨"
+    requires: {}
+  skill_version: "1.1.0"
 ---
 
 # 🔨 Plugin Forge — QwenPaw 插件锻造厂
 
-> **版本**: 1.0.0 | **许可**: MIT
+> **版本**: 1.1.0 | **许可**: MIT
 
 让 QwenPaw 内部的 AI Agent（或人类用户）从零创建、验证、部署 QwenPaw 插件的完整工具链。
+
+## 路径体系：Windows vs Docker
+
+> ⚠️ Windows 同时支持 `~/.copaw`（优先）和 `~/.qwenpaw`（默认）。
+
+| 类型 | Windows | Docker | 说明 |
+|------|---------|--------|------|
+| **插件目录** | `~/.copaw/plugins/` | `/app/working/plugins` | 插件文件放置位置 |
+| **WORKING_DIR** | `~/.copaw` | `/app/working` | `QWENPAW_WORKING_DIR` |
+| **SECRETS_DIR** | `~/.copaw.secret/` | `/app/working.secret` | `QWENPAW_SECRET_DIR` |
+
+**Docker 关键环境变量：**
+```
+QWENPAW_WORKING_DIR=/app/working
+QWENPAW_SECRET_DIR=/app/working.secret
+```
 
 ## 核心能力
 
@@ -164,7 +178,7 @@ Agent 描述需求
        ↓
 Scaffolder.fill_template(template_id, params)
        ↓
-写入 ~/.copaw/plugins/<plugin-id>/
+写入 plugins/<plugin-id>/          # Windows: ~/.copaw/plugins/  Docker: /app/working/plugins/
        ↓
 [可选] auto_validate_after_create=True 时自动进入 Phase 2
 ```
@@ -175,10 +189,10 @@ Scaffolder.fill_template(template_id, params)
 
 | 层级 | 检查内容 | 失败级别 |
 |------|---------|---------|
-| **JSON 校验** | plugin.json 语法、必填字段、id 格式、version 格式、capabilities/permissions 一致性 | ERROR |
-| **AST 校验** | plugin.py 语法、导出 `plugin` 对象、类含 `register()` 方法、方法签名 | ERROR |
+| **JSON 校验** | plugin.json 语法、必填字段、id 格式、version 格式 | ERROR |
+| **AST 校验** | plugin.py 语法、导出 `plugin` 对象、类含 `register()` 方法 | ERROR |
 | **安全扫描** | 危险导入 (os.system/eval/exec)、硬编码密钥、路径穿越模式 | ERROR/WARNING |
-| **API 合规** | api.register_* 方法合法性、hook priority 范围 [0,100]、capabilities 与实际调用一致性 | WARNING |
+| **API 合规** | api.register_* 方法合法性、hook priority 范围 [0,100] | WARNING |
 
 ### Phase 3: VERIFY（运行时验证）
 
@@ -193,9 +207,8 @@ Step B: 目录发现
   └─ 确认 PluginLoader.discover_plugins() 能找到该目录
 
 Step C: 日志扫描
-  ├─ 自动检测 QwenPaw logs/ 目录
-  ├─ 搜索 <plugin_id> 相关日志行
-  └─ 统计 errors / warnings 数量
+  ├─ 自动检测 logs/ 目志目录
+  └─ 搜索 <plugin_id> 相关日志行
 ```
 
 ---
@@ -240,6 +253,64 @@ copaw-plugin-forge/
 
 ---
 
+## Docker 环境注意事项
+
+### 插件目录
+
+Docker 环境下插件目录为 `/app/working/plugins/`（由 `get_plugins_dir()` 返回），而非 `~/.copaw/plugins/`。
+
+```bash
+# 确认插件目录
+echo $QWENPAW_WORKING_DIR   # → /app/working
+ls /app/working/plugins/
+
+# 创建插件目录（如不存在）
+mkdir -p /app/working/plugins/<plugin-id>/
+```
+
+### 验证插件安装
+
+```bash
+# 列出已安装插件
+qwenpaw plugin list
+
+# 查看插件详情
+qwenpaw plugin info <plugin-id>
+
+# 验证插件格式
+qwenpaw plugin validate /app/working/plugins/<plugin-id>/
+```
+
+### 插件配置
+
+在 `config.json` 中配置插件：
+
+```json
+{
+  "plugins": {
+    "<plugin-id>": {
+      "enabled": true,
+      "dry_run": false,
+      "custom_config": {}
+    }
+  }
+}
+```
+
+### 重启加载
+
+插件安装或更新后，需要重启 QwenPaw 服务才能生效：
+
+```bash
+# 通过 CLI 重启
+qwenpaw daemon restart
+
+# 或重启 Docker 容器
+docker restart qwenpaw
+```
+
+---
+
 ## 开发与扩展
 
 ### 添加新模板
@@ -270,7 +341,18 @@ TEMPLATE_REGISTRY["my-template"] = my_template
 
 ### 自定义安全规则
 
-在 `scripts/plugin_validator.py` 的 `DANGEROUS_IMPORTS` / `SECRET_PATTERNS` 字典中添加规则即可。安全规则是可配置的。
+在 `scripts/plugin_validator.py` 的 `DANGEROUS_IMPORTS` / `SECRET_PATTERNS` 字典中添加规则即可。
+
+---
+
+## 故障排查
+
+| 问题 | 排查 |
+|------|------|
+| 插件未加载 | 检查 plugin.json 是否在插件目录；entry_point 文件是否存在 |
+| register() 未调用 | 确认 plugin.py 导出名为 `plugin` 的对象 |
+| Docker 下路径错误 | 使用 `/app/working/plugins/` 而非 `~/.copaw/plugins/` |
+| 配置未生效 | 重启 QwenPaw 或 Docker 容器 |
 
 ---
 
